@@ -1,0 +1,27 @@
+// Windows resources for fathom.exe. build.rs fills in the @...@ placeholders.
+
+1 ICON "@ICON@"
+
+1 VERSIONINFO
+FILEVERSION @VERSION_NUMBERS@
+PRODUCTVERSION @VERSION_NUMBERS@
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "Den Delimarsky"
+      VALUE "FileDescription", "Fathom"
+      VALUE "FileVersion", "@VERSION@"
+      VALUE "InternalName", "fathom"
+      VALUE "LegalCopyright", "Copyright (c) Den Delimarsky"
+      VALUE "OriginalFilename", "fathom.exe"
+      VALUE "ProductName", "Fathom"
+      VALUE "ProductVersion", "@VERSION@"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

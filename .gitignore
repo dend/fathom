@@ -1,0 +1,18 @@
+# Build output
+/target
+/installer/Output/
+
+# Keys and certificates never belong in the repository. Fathom keeps its settings
+# in the OS config folder and its credentials in the OS credential store.
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
