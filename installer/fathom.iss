@@ -58,7 +58,9 @@ WizardImageFile={#WizardImages}
 WizardImageFileDynamicDark={#WizardImages}
 WizardSmallImageFile={#WizardSmallImages}
 WizardSmallImageFileDynamicDark={#WizardSmallImages}
-SetupIconFile=..\assets\icons\icon.ico
+; Setup has its own icon, a cargo crate sunk on the app icon's seabed, so the
+; installer and the installed app are easy to tell apart.
+SetupIconFile=setup.ico
 UninstallDisplayIcon={app}\fathom.exe
 UninstallDisplayName=Fathom
 
