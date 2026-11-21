@@ -225,6 +225,8 @@ pub struct FathomApp {
     next_id: u64,
     toasts: Vec<Toast>,
     modal: Option<dialogs::Modal>,
+    /// The graphics API and adapter, for the About dialog.
+    graphics: String,
 
     refresh_at: Option<Instant>,
     tree_refresh_at: Option<(Instant, HashSet<String>)>,
@@ -314,6 +316,11 @@ impl FathomApp {
             next_id: 1,
             toasts: Vec::new(),
             modal: None,
+            graphics: cc
+                .wgpu_render_state
+                .as_ref()
+                .map(|render| dialogs::graphics_name(&render.adapter.get_info()))
+                .unwrap_or_default(),
             refresh_at: None,
             tree_refresh_at: None,
             typed: String::new(),

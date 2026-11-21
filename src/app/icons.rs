@@ -40,6 +40,7 @@ pub enum Icon {
     Trash,
     Pencil,
     Info,
+    Help,
     Close,
     Search,
     Plus,
@@ -331,6 +332,12 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.circle(12.0, 12.0, 9.0);
             pen.line(12.0, 11.0, 12.0, 16.0);
             pen.dot(12.0, 8.0);
+        }
+        Icon::Help => {
+            pen.circle(12.0, 12.0, 9.0);
+            pen.arc(12.0, 9.8, 2.6, 2.6, 180.0, 400.0);
+            pen.poly(&[(14.0, 11.5), (12.0, 13.0), (12.0, 14.2)]);
+            pen.dot(12.0, 17.0);
         }
         Icon::Close => {
             pen.line(6.0, 6.0, 18.0, 18.0);

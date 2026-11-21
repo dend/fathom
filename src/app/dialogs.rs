@@ -17,6 +17,7 @@ pub enum Modal {
     Confirm(ConfirmForm),
     Domain(DomainForm),
     Properties(PropertiesView),
+    About(AboutView),
 }
 
 /// Results of work started from a dialog.
@@ -120,6 +121,46 @@ pub struct PropertiesView {
     item: Item,
     bucket: String,
     info: Option<Result<ObjectInfo, String>>,
+}
+
+pub struct AboutView {
+    icon: Option<egui::TextureHandle>,
+}
+
+const WEBSITE: &str = "https://den.dev";
+const SOURCE: &str = "https://github.com/dend/fathom";
+
+/// The graphics API and adapter the window is drawn with, such as
+/// "Direct3D 12, NVIDIA GeForce RTX 3090".
+pub fn graphics_name(info: &eframe::wgpu::AdapterInfo) -> String {
+    use eframe::wgpu::Backend;
+    let api = match info.backend {
+        Backend::Dx12 => "Direct3D 12",
+        Backend::Vulkan => "Vulkan",
+        Backend::Metal => "Metal",
+        Backend::Gl => "OpenGL",
+        other => other.to_str(),
+    };
+    if info.name.is_empty() {
+        api.to_string()
+    } else {
+        format!("{api}, {}", info.name)
+    }
+}
+
+fn platform_name() -> String {
+    let os = match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        "linux" => "Linux",
+        other => other,
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "ARM64",
+        other => other,
+    };
+    format!("{os} {arch}")
 }
 
 impl Modal {
@@ -541,6 +582,7 @@ impl FathomApp {
             Modal::Confirm(form) => self.confirm_dialog(ctx, form),
             Modal::Domain(form) => self.domain_dialog(ctx, form),
             Modal::Properties(view) => self.properties_dialog(ctx, view),
+            Modal::About(view) => self.about_dialog(ctx, view),
         };
         // A dialog may have opened another one (for example remove -> add connection).
         if keep && self.modal.is_none() {
@@ -1141,6 +1183,108 @@ impl FathomApp {
         if let Some(value) = copied {
             ctx.copy_text(value);
             self.toast("Copied", ToastKind::Success);
+        }
+        !(footer.cancel || footer.submit)
+    }
+
+    pub(super) fn show_about(&mut self) {
+        let icon = image::load_from_memory(include_bytes!("../../assets/icons/128x128@2x.png"))
+            .ok()
+            .map(|icon| {
+                let icon = icon.to_rgba8();
+                let size = [icon.width() as usize, icon.height() as usize];
+                let pixels = egui::ColorImage::from_rgba_unmultiplied(size, icon.as_raw());
+                self.ctx
+                    .load_texture("about-icon", pixels, egui::TextureOptions::LINEAR)
+            });
+        self.modal = Some(Modal::About(AboutView { icon }));
+    }
+
+    fn about_dialog(&mut self, ctx: &egui::Context, view: &mut AboutView) -> bool {
+        let p = theme::palette_of(ctx);
+        let mut rows = vec![("Version", env!("CARGO_PKG_VERSION").to_string())];
+        // Release builds run on GitHub Actions, which names the commit being built.
+        if let Some(sha) = option_env!("GITHUB_SHA") {
+            rows.push(("Commit", sha.chars().take(7).collect()));
+        }
+        rows.push(("Platform", platform_name()));
+        if !self.graphics.is_empty() {
+            rows.push(("Graphics", self.graphics.clone()));
+        }
+        rows.push(("License", env!("CARGO_PKG_LICENSE").to_string()));
+        let links = [
+            ("Website", "den.dev", WEBSITE),
+            ("Source code", "github.com/dend/fathom", SOURCE),
+        ];
+
+        let mut open = None;
+        let footer = dialog(
+            ctx,
+            "About Fathom",
+            420.0,
+            false,
+            &[("Close", ButtonKind::Primary)],
+            |ui| {
+                const ICON: f32 = 64.0;
+                const LABEL: f32 = 96.0;
+                const GAP: f32 = 12.0;
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 14.0;
+                    if let Some(icon) = &view.icon {
+                        ui.add(egui::Image::new(icon).fit_to_exact_size(vec2(ICON, ICON)));
+                    }
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        let name = theme::strong(20.0);
+                        let text = ui.fonts_mut(|f| f.row_height(&name))
+                            + 2.0
+                            + ui.text_style_height(&egui::TextStyle::Body);
+                        ui.add_space(((ICON - text) / 2.0).max(0.0));
+                        ui.label(RichText::new("Fathom").font(name).color(p.text));
+                        ui.label(RichText::new("File manager for Cloudflare R2").color(p.muted));
+                    });
+                });
+                ui.add_space(12.0);
+                ui.spacing_mut().item_spacing.y = ROW_GAP;
+                let value_width = ui.available_width() - LABEL - GAP;
+                for (label, value) in &rows {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = GAP;
+                        cell(ui, LABEL, |ui| {
+                            ui.label(RichText::new(*label).color(p.muted))
+                        });
+                        cell(ui, value_width, |ui| {
+                            ui.add(egui::Label::new(value).wrap().selectable(true))
+                        });
+                    });
+                }
+                for (label, text, url) in links {
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = GAP;
+                        cell(ui, LABEL, |ui| {
+                            ui.label(RichText::new(label).color(p.muted))
+                        });
+                        cell(ui, value_width, |ui| {
+                            let link = ui.link(text).on_hover_text(url);
+                            if link.clicked() {
+                                open = Some(url);
+                            }
+                            link
+                        });
+                    });
+                }
+                ui.add_space(12.0);
+                ui.label(
+                    RichText::new(format!("Copyright © {}", env!("CARGO_PKG_AUTHORS")))
+                        .color(p.muted)
+                        .font(theme::small()),
+                );
+            },
+        );
+        if let Some(url) = open {
+            if let Err(error) = crate::system::open(url) {
+                self.toast(error, ToastKind::Error);
+            }
         }
         !(footer.cancel || footer.submit)
     }

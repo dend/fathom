@@ -42,6 +42,9 @@ impl FathomApp {
             // Right-hand group first, so the address bar can take what is left.
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 1.0;
+                if icons::button(ui, Icon::Help, "About Fathom", true).clicked() {
+                    self.show_about();
+                }
                 if icons::toggle(
                     ui,
                     Icon::Panel,
