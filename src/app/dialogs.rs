@@ -501,6 +501,25 @@ fn field(
     response
 }
 
+/// Height of a row in a details list (Properties, About): the height of the icon
+/// button some rows end with, so rows with and without one are spaced alike.
+const ICON_BUTTON: f32 = 26.0;
+/// Space between rows in a details list.
+const ROW_GAP: f32 = 2.0;
+
+/// One column of a details row: at least a row tall, with its first line of text
+/// centred on the row and as much space below a wrapped last line as above.
+fn cell(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> egui::Response) {
+    let pad = ((ICON_BUTTON - ui.text_style_height(&egui::TextStyle::Body)) / 2.0).max(0.0);
+    ui.allocate_ui_with_layout(vec2(width, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(width);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.add_space(pad);
+        add(ui);
+        ui.add_space(pad);
+    });
+}
+
 fn text_input(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> egui::Response {
     ui.add(
         egui::TextEdit::singleline(value)
@@ -1086,30 +1105,19 @@ impl FathomApp {
                 // the width. A grid sizes its columns from the previous frame, which
                 // left wrapping values one character wide.
                 const LABEL: f32 = 104.0;
-                const BUTTON: f32 = 24.0;
                 const GAP: f32 = 12.0;
-                let value_width = (ui.available_width() - LABEL - BUTTON - 2.0 * GAP).max(120.0);
+                let value_width =
+                    (ui.available_width() - LABEL - ICON_BUTTON - 2.0 * GAP).max(120.0);
+                ui.spacing_mut().item_spacing.y = ROW_GAP;
                 for (label, value, copyable) in &rows {
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = GAP;
-                        ui.allocate_ui_with_layout(
-                            vec2(LABEL, 0.0),
-                            Layout::top_down(Align::Min),
-                            |ui| {
-                                ui.set_width(LABEL);
-                                ui.add(
-                                    egui::Label::new(RichText::new(label).color(p.muted)).wrap(),
-                                );
-                            },
-                        );
-                        ui.allocate_ui_with_layout(
-                            vec2(value_width, 0.0),
-                            Layout::top_down(Align::Min),
-                            |ui| {
-                                ui.set_width(value_width);
-                                ui.add(egui::Label::new(value).wrap().selectable(true));
-                            },
-                        );
+                        cell(ui, LABEL, |ui| {
+                            ui.add(egui::Label::new(RichText::new(label).color(p.muted)).wrap())
+                        });
+                        cell(ui, value_width, |ui| {
+                            ui.add(egui::Label::new(value).wrap().selectable(true))
+                        });
                         if *copyable
                             && icons::button(
                                 ui,
@@ -1122,10 +1130,11 @@ impl FathomApp {
                             copied = Some(value.clone());
                         }
                     });
-                    ui.add_space(4.0);
                 }
                 if let Some(note) = &note {
-                    ui.label(RichText::new(note).color(p.muted));
+                    cell(ui, ui.available_width(), |ui| {
+                        ui.add(egui::Label::new(RichText::new(note).color(p.muted)).wrap())
+                    });
                 }
             },
         );
