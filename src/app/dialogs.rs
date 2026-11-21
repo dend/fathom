@@ -679,20 +679,29 @@ impl FathomApp {
                         if saving {
                             Reply::Saved((|| {
                                 client?;
+                                let is_new = existing_id.is_none();
                                 connection.id = existing_id.unwrap_or_else(new_id);
                                 store.save_credentials(&connection.id, &credentials)?;
                                 let saved = connection.clone();
-                                store.update(move |config| {
-                                    match config
-                                        .connections
-                                        .iter_mut()
-                                        .find(|c| c.id == connection.id)
-                                    {
-                                        Some(slot) => *slot = connection.clone(),
-                                        None => config.connections.push(connection.clone()),
-                                    }
-                                    config.active = Some(connection.id);
-                                })?;
+                                store
+                                    .update(move |config| {
+                                        match config
+                                            .connections
+                                            .iter_mut()
+                                            .find(|c| c.id == connection.id)
+                                        {
+                                            Some(slot) => *slot = connection.clone(),
+                                            None => config.connections.push(connection.clone()),
+                                        }
+                                        config.active = Some(connection.id);
+                                    })
+                                    // A new connection that never made it into the
+                                    // settings would leave its account details behind.
+                                    .inspect_err(|_| {
+                                        if is_new {
+                                            store.delete_credentials(&saved.id);
+                                        }
+                                    })?;
                                 Ok(saved)
                             })())
                         } else {

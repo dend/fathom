@@ -15,11 +15,14 @@ fn main() -> eframe::Result {
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
+    let config_dir = fathom::system::config_dir();
+    fathom::system::move_old_state_file(&config_dir);
     let options = eframe::NativeOptions {
         viewport,
         centered: true,
         persist_window: true,
-        persistence_path: Some(fathom::system::config_dir()),
+        // Despite its docs, eframe takes this as the path of its state file.
+        persistence_path: Some(fathom::system::state_file(&config_dir)),
         ..Default::default()
     };
     eframe::run_native(

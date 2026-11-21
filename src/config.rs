@@ -286,15 +286,25 @@ impl Store {
         let result = change(&mut config);
 
         let json = serde_json::to_string_pretty(&*config).map_err(|e| e.to_string())?;
-        let write = || -> std::io::Result<()> {
-            if let Some(dir) = self.path.parent() {
-                fs::create_dir_all(dir)?;
+        if let Some(dir) = self.path.parent() {
+            if dir.exists() && !dir.is_dir() {
+                return Err(format!(
+                    "Could not save settings: Fathom keeps them in the folder {}, but a file \
+                     with that name is in the way. Move or delete the file, then try again.",
+                    dir.display()
+                ));
             }
-            let temp = self.path.with_extension("json.tmp");
-            fs::write(&temp, json)?;
-            fs::rename(&temp, &self.path)
-        };
-        write().map_err(|e| format!("Could not save settings: {e}"))?;
+            fs::create_dir_all(dir).map_err(|e| {
+                format!(
+                    "Could not create the settings folder {}: {e}",
+                    dir.display()
+                )
+            })?;
+        }
+        let temp = self.path.with_extension("json.tmp");
+        fs::write(&temp, json)
+            .and_then(|()| fs::rename(&temp, &self.path))
+            .map_err(|e| format!("Could not save settings to {}: {e}", self.path.display()))?;
         Ok(result)
     }
 
@@ -505,5 +515,37 @@ mod tests {
         assert!(reloaded.credentials("one").unwrap() == credentials);
         assert_eq!(reloaded.snapshot().active.as_deref(), Some("one"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn saves_once_the_old_window_state_file_is_moved_aside() {
+        // Up to 0.0.2, eframe wrote its state file where the settings folder goes.
+        let parent = temp_dir("state");
+        let dir = parent.join("dev.den.fathom");
+        fs::create_dir_all(&parent).unwrap();
+        fs::write(&dir, "(window: ())").unwrap();
+
+        let blocked = Store::load_with(dir.clone(), Box::new(MemoryVault::default()));
+        let error = blocked.update(|_| ()).unwrap_err();
+        assert!(error.contains(&dir.display().to_string()), "{error}");
+        assert!(
+            error.contains("a file with that name is in the way"),
+            "{error}"
+        );
+
+        crate::system::move_old_state_file(&dir);
+        assert!(dir.is_dir());
+        let state = crate::system::state_file(&dir);
+        assert_eq!(fs::read_to_string(state).unwrap(), "(window: ())");
+        let store = Store::load_with(dir.clone(), Box::new(MemoryVault::default()));
+        store
+            .update(|config| config.active = Some("one".into()))
+            .unwrap();
+        assert!(dir.join("config.json").is_file());
+
+        // Nothing to move the second time.
+        crate::system::move_old_state_file(&dir);
+        assert!(dir.join("config.json").is_file());
+        let _ = fs::remove_dir_all(parent);
     }
 }

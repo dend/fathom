@@ -31,6 +31,32 @@ pub fn config_dir() -> PathBuf {
     base.join(APP_ID)
 }
 
+/// The file in the settings folder where eframe keeps the window's size and
+/// position and the app's view preferences.
+pub fn state_file(dir: &Path) -> PathBuf {
+    dir.join("app.ron")
+}
+
+/// Versions up to 0.0.2 had eframe write its state file at the settings folder's
+/// own path, so the folder, and with it every connection, could not be created.
+/// Moves that file into the folder, where eframe now looks for it.
+pub fn move_old_state_file(dir: &Path) {
+    if !dir.is_file() {
+        return;
+    }
+    let mut aside = dir.as_os_str().to_owned();
+    aside.push(".old");
+    let aside = PathBuf::from(aside);
+    let moved = std::fs::rename(dir, &aside)
+        .and_then(|()| std::fs::create_dir_all(dir))
+        .and_then(|()| std::fs::rename(&aside, state_file(dir)));
+    if moved.is_err() {
+        // Only window placement and view preferences are lost; settings can be saved.
+        let _ = std::fs::remove_file(&aside);
+        let _ = std::fs::remove_file(dir);
+    }
+}
+
 /// Seconds to add to a UTC timestamp to get local time at that moment.
 #[cfg(windows)]
 pub fn local_offset(unix: i64) -> i64 {
