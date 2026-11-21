@@ -6,18 +6,41 @@ use std::process::Command;
 
 const APP_ID: &str = "dev.den.fathom";
 
-/// Where settings are kept. `FATHOM_CONFIG_DIR` overrides it, which keeps
+/// Where settings are kept: `%APPDATA%\Fathom` on Windows, the bundle
+/// identifier's folder in `~/Library/Application Support` on macOS, and
+/// `~/.config/fathom` on Linux. `FATHOM_CONFIG_DIR` overrides it, which keeps
 /// development and test runs away from real settings.
 pub fn config_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("FATHOM_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
+    let name = if cfg!(windows) {
+        "Fathom"
+    } else if cfg!(target_os = "macos") {
+        APP_ID
+    } else {
+        "fathom"
+    };
+    config_base().join(name)
+}
+
+/// Where 0.0.1 and 0.0.2 kept settings (the same folder as now on macOS), or
+/// `None` when `FATHOM_CONFIG_DIR` points somewhere else.
+pub fn old_config_dir() -> Option<PathBuf> {
+    if std::env::var_os("FATHOM_CONFIG_DIR").is_some() {
+        return None;
+    }
+    Some(config_base().join(APP_ID))
+}
+
+/// The platform's folder for per-user settings.
+fn config_base() -> PathBuf {
     let home = || {
         std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default()
     };
-    let base = if cfg!(windows) {
+    if cfg!(windows) {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(home)
@@ -27,8 +50,7 @@ pub fn config_dir() -> PathBuf {
         std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".config"))
-    };
-    base.join(APP_ID)
+    }
 }
 
 /// The file in the settings folder where eframe keeps the window's size and
@@ -37,23 +59,38 @@ pub fn state_file(dir: &Path) -> PathBuf {
     dir.join("app.ron")
 }
 
-/// Versions up to 0.0.2 had eframe write its state file at the settings folder's
-/// own path, so the folder, and with it every connection, could not be created.
-/// Moves that file into the folder, where eframe now looks for it.
-pub fn move_old_state_file(dir: &Path) {
-    if !dir.is_file() {
-        return;
-    }
-    let mut aside = dir.as_os_str().to_owned();
-    aside.push(".old");
-    let aside = PathBuf::from(aside);
-    let moved = std::fs::rename(dir, &aside)
-        .and_then(|()| std::fs::create_dir_all(dir))
-        .and_then(|()| std::fs::rename(&aside, state_file(dir)));
-    if moved.is_err() {
-        // Only window placement and view preferences are lost; settings can be saved.
-        let _ = std::fs::remove_file(&aside);
-        let _ = std::fs::remove_file(dir);
+/// Brings what 0.0.1 and 0.0.2 left at `old` to `new`. Those versions kept
+/// settings in a folder named after the app ID, and had eframe write its state
+/// file at that same path, which could keep the folder from being created.
+pub fn move_old_settings(old: &Path, new: &Path) {
+    use std::fs;
+    if old.is_file() {
+        // eframe's state file: window placement and view preferences.
+        let mut aside = old.as_os_str().to_owned();
+        aside.push(".old");
+        let aside = PathBuf::from(aside);
+        let state = state_file(new);
+        let moved = fs::rename(old, &aside)
+            .and_then(|()| fs::create_dir_all(new))
+            .and_then(|()| {
+                if state.exists() {
+                    fs::remove_file(&aside)
+                } else {
+                    fs::rename(&aside, &state)
+                }
+            });
+        if moved.is_err() {
+            // Only window placement and view preferences are lost; settings can be saved.
+            let _ = fs::remove_file(&aside);
+            let _ = fs::remove_file(old);
+        }
+    } else if old.is_dir() && old != new && !new.exists() && fs::rename(old, new).is_err() {
+        // Something has a file in it open, so copy what can be copied instead.
+        if fs::create_dir_all(new).is_ok() {
+            for entry in fs::read_dir(old).into_iter().flatten().flatten() {
+                let _ = fs::copy(entry.path(), new.join(entry.file_name()));
+            }
+        }
     }
 }
 

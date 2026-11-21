@@ -16,7 +16,9 @@ fn main() -> eframe::Result {
         viewport = viewport.with_icon(icon);
     }
     let config_dir = fathom::system::config_dir();
-    fathom::system::move_old_state_file(&config_dir);
+    if let Some(old) = fathom::system::old_config_dir() {
+        fathom::system::move_old_settings(&old, &config_dir);
+    }
     let options = eframe::NativeOptions {
         viewport,
         centered: true,

@@ -545,7 +545,8 @@ mod tests {
         // A change that couldn't be saved doesn't linger in memory either.
         assert!(blocked.snapshot().connections.is_empty());
 
-        crate::system::move_old_state_file(&dir);
+        // On macOS the settings folder kept its name, so old and new are the same.
+        crate::system::move_old_settings(&dir, &dir);
         assert!(dir.is_dir());
         let state = crate::system::state_file(&dir);
         assert_eq!(fs::read_to_string(state).unwrap(), "(window: ())");
@@ -556,8 +557,38 @@ mod tests {
         assert!(dir.join("config.json").is_file());
 
         // Nothing to move the second time.
-        crate::system::move_old_state_file(&dir);
+        crate::system::move_old_settings(&dir, &dir);
         assert!(dir.join("config.json").is_file());
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn moves_settings_from_the_old_folder_name() {
+        let parent = temp_dir("rename");
+        let old = parent.join("dev.den.fathom");
+        let new = parent.join("Fathom");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(
+            old.join("config.json"),
+            r#"{"connections":[{"id":"one","name":"Main"}],"active":"one"}"#,
+        )
+        .unwrap();
+        fs::write(old.join("app.ron"), "(window: ())").unwrap();
+
+        crate::system::move_old_settings(&old, &new);
+        assert!(!old.exists());
+        let store = Store::load_with(new.clone(), Box::new(MemoryVault::default()));
+        assert_eq!(store.connection("one").unwrap().name, "Main");
+        assert!(crate::system::state_file(&new).is_file());
+
+        // A stray state file at the old path joins the new folder without
+        // replacing the state already there.
+        fs::write(&old, "(stray: ())").unwrap();
+        crate::system::move_old_settings(&old, &new);
+        assert!(!old.exists());
+        let state = fs::read_to_string(crate::system::state_file(&new)).unwrap();
+        assert_eq!(state, "(window: ())");
+        assert!(new.join("config.json").is_file());
         let _ = fs::remove_dir_all(parent);
     }
 }
