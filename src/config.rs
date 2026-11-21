@@ -280,12 +280,21 @@ impl Store {
             .ok_or_else(|| "This connection no longer exists".to_string())
     }
 
-    /// Applies a change to the config and writes it to disk.
+    /// Applies a change to the config and writes it to disk. If it can't be
+    /// written, the change is undone, so what the app shows matches the file.
     pub fn update<T>(&self, change: impl FnOnce(&mut Config) -> T) -> Result<T, String> {
         let mut config = self.config.lock().unwrap();
+        let before = config.clone();
         let result = change(&mut config);
+        if let Err(error) = self.write(&config) {
+            *config = before;
+            return Err(error);
+        }
+        Ok(result)
+    }
 
-        let json = serde_json::to_string_pretty(&*config).map_err(|e| e.to_string())?;
+    fn write(&self, config: &Config) -> Result<(), String> {
+        let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
         if let Some(dir) = self.path.parent() {
             if dir.exists() && !dir.is_dir() {
                 return Err(format!(
@@ -304,8 +313,7 @@ impl Store {
         let temp = self.path.with_extension("json.tmp");
         fs::write(&temp, json)
             .and_then(|()| fs::rename(&temp, &self.path))
-            .map_err(|e| format!("Could not save settings to {}: {e}", self.path.display()))?;
-        Ok(result)
+            .map_err(|e| format!("Could not save settings to {}: {e}", self.path.display()))
     }
 
     pub fn credentials(&self, id: &str) -> Result<Credentials, String> {
@@ -526,12 +534,16 @@ mod tests {
         fs::write(&dir, "(window: ())").unwrap();
 
         let blocked = Store::load_with(dir.clone(), Box::new(MemoryVault::default()));
-        let error = blocked.update(|_| ()).unwrap_err();
+        let error = blocked
+            .update(|config| config.connections.push(Connection::default()))
+            .unwrap_err();
         assert!(error.contains(&dir.display().to_string()), "{error}");
         assert!(
             error.contains("a file with that name is in the way"),
             "{error}"
         );
+        // A change that couldn't be saved doesn't linger in memory either.
+        assert!(blocked.snapshot().connections.is_empty());
 
         crate::system::move_old_state_file(&dir);
         assert!(dir.is_dir());
