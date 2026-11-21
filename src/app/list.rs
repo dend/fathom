@@ -173,6 +173,9 @@ impl FathomApp {
 
         // Rows.
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(vec2(0.0, 1.0))));
+        // show_rows sizes the content from this ui's spacing, so it has to be zero
+        // here, not just inside the rows, or the list gains empty space at the end.
+        child.spacing_mut().item_spacing.y = 0.0;
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt("file-list")
             .auto_shrink(false)
@@ -193,7 +196,6 @@ impl FathomApp {
         }
         let count = self.view.len();
         let output = scroll.show_rows(&mut child, theme::ROW, count, |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
             for row in range {
                 // A row's action (opening a folder, say) can replace the listing mid-frame.
                 if self

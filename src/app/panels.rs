@@ -519,11 +519,12 @@ impl FathomApp {
                 }
             })
         });
+        // As in the file list, show_rows reads the spacing from this ui.
+        list_ui.spacing_mut().item_spacing.y = 0.0;
         egui::ScrollArea::vertical()
             .id_salt("transfers")
             .auto_shrink(false)
             .show_rows(&mut list_ui, theme::ROW, sorted.len(), |ui, range| {
-                ui.spacing_mut().item_spacing.y = 0.0;
                 for transfer in &sorted[range] {
                     self.transfer_row(ui, transfer);
                 }
