@@ -109,18 +109,17 @@ impl FathomApp {
             pos2(rect.left() + 26.0, rect.top() + 1.0),
             pos2(rect.right() - 4.0, rect.bottom() - 1.0),
         );
+        // Centred by egui rather than by margins, so the hint and the typed text
+        // both line up with the search icon.
         let response = ui.place(
             edit_rect,
             egui::TextEdit::singleline(&mut self.filter)
                 .id(id)
                 .hint_text("Filter")
                 .frame(egui::Frame::NONE)
-                .margin(egui::Margin {
-                    left: 0,
-                    right: 0,
-                    top: 5,
-                    bottom: 3,
-                })
+                .margin(egui::Margin::ZERO)
+                .align(egui::Align2::LEFT_CENTER)
+                .min_size(edit_rect.size())
                 .desired_width(edit_rect.width())
                 .interactive(enabled),
         );
