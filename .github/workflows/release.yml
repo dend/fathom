@@ -169,6 +169,12 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # codesign won't sign the app while fth sits unsigned beside it. The arm64
+      # linker signs it already; on Intel nothing does.
+      - name: Sign fth
+        if: runner.os == 'macOS'
+        run: codesign --force -s - --options runtime target/${{ matrix.target }}/release/fth
+
       - name: Package
         run: cargo packager --release --target ${{ matrix.target }} --formats ${{ matrix.formats }}
 
