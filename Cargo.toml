@@ -8,6 +8,7 @@ repository = "https://github.com/dend/fathom"
 edition = "2021"
 rust-version = "1.90"
 publish = false
+default-run = "fathom"
 
 [lib]
 name = "fathom"
@@ -16,6 +17,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "fathom"
 path = "src/main.rs"
+
+[[bin]]
+name = "fth"
+path = "src/bin/fth.rs"
 
 [dependencies]
 # Window, input and GPU rendering (Metal, DirectX 12 or Vulkan through wgpu).
@@ -42,8 +47,10 @@ serde_json = "1"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # SHA-256 for SigV4 request signing (HMAC is implemented on top of it).
 sha2 = "0.10"
+# The command line tool's --regex patterns, and the globs it translates into them.
+regex = "1"
 # Account details live in the OS credential store, never on disk in plain text.
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+keyring ={ version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(windows)'.dependencies]
 # Local time and the default app for a file type.
@@ -88,7 +95,7 @@ icons = [
     "assets/icons/icon.icns",
     "assets/icons/icon.ico",
 ]
-binaries = [{ path = "fathom", main = true }]
+binaries = [{ path = "fathom", main = true }, { path = "fth", main = false }]
 
 [package.metadata.packager.macos]
 minimum-system-version = "10.15"

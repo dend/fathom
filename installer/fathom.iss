@@ -1,6 +1,7 @@
 ; Windows installer for Fathom, built with Inno Setup 6:
 ;
-;   iscc /DAppVersion=0.2.0 /DSourceExe=..\target\release\fathom.exe installer\fathom.iss
+;   iscc /DAppVersion=0.2.0 /DSourceExe=..\target\release\fathom.exe
+;        /DSourceCliExe=..\target\release\fth.exe installer\fathom.iss
 ;
 ; AppId must never change: it is how a newer installer finds the installed copy and
 ; updates it in place, keeping the install folder and the user's connections.
@@ -14,6 +15,9 @@
 #endif
 #ifndef SourceExe
   #define SourceExe "..\target\release\fathom.exe"
+#endif
+#ifndef SourceCliExe
+  #define SourceCliExe "..\target\release\fth.exe"
 #endif
 ; Windows file versions are four numbers, so drop any pre-release suffix.
 #define NumericVersion Copy(AppVersion, 1, Pos("-", AppVersion + "-") - 1) + ".0"
@@ -47,6 +51,8 @@ MinVersion=10.0
 ; Manager's polite shutdown request, so it has to be forced.
 CloseApplications=force
 RestartApplications=no
+; Tells open windows when the PATH changes, so new terminals find fth.
+ChangesEnvironment=yes
 
 ; Follows the Windows light or dark setting, like the app. Each image comes in the
 ; sizes Setup picks from for different display scaling. The same images work in both
@@ -73,17 +79,29 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
+Name: "addtopath"; Description: "Add fth to the &PATH, to run it from any terminal"; GroupDescription: "Command line:"
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "fathom.exe"; Flags: ignoreversion
+Source: "{#SourceCliExe}"; DestDir: "{app}"; DestName: "fth.exe"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Fathom"; Filename: "{app}\fathom.exe"
 Name: "{autodesktop}\Fathom"; Filename: "{app}\fathom.exe"; Tasks: desktopicon
 
+; Programs that updating moved aside because they were running.
+[InstallDelete]
+Type: files; Name: "{app}\fathom.exe.old"
+Type: files; Name: "{app}\fth.exe.old"
+
+[UninstallDelete]
+Type: files; Name: "{app}\*.old"
+
 [Run]
 Filename: "{app}\fathom.exe"; Description: "Open Fathom"; Flags: nowait postinstall skipifsilent
+; Fathom updating itself runs Setup silently with /relaunch=yes, to be opened again after.
+Filename: "{app}\fathom.exe"; Flags: nowait; Check: RelaunchRequested
 
 [Code]
 // The version recorded by the copy already installed, if any.
@@ -96,6 +114,49 @@ begin
     'Software\Microsoft\Windows\CurrentVersion\Uninstall\{ECFF7C6D-44ED-43C5-AAA0-A05516A53EC0}_is1',
     'DisplayVersion', Version) then
     Result := Version;
+end;
+
+function RelaunchRequested(): Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|no}') = 'yes';
+end;
+
+// Puts the install folder in the user's PATH, or takes it out.
+procedure UpdatePath(Add: Boolean);
+var
+  Path, Padded, Folder: String;
+  Index: Integer;
+begin
+  Folder := ExpandConstant('{app}');
+  if not RegQueryStringValue(HKCU, 'Environment', 'Path', Path) then
+    Path := '';
+  // With semicolons around both, C:\Fathom can't match inside C:\Fathom2.
+  Padded := ';' + Path + ';';
+  Index := Pos(';' + Uppercase(Folder) + ';', Uppercase(Padded));
+  if Add and (Index = 0) then
+  begin
+    if (Path <> '') and (Path[Length(Path)] <> ';') then
+      Path := Path + ';';
+    RegWriteExpandStringValue(HKCU, 'Environment', 'Path', Path + Folder);
+  end
+  else if not Add and (Index > 0) then
+  begin
+    Delete(Padded, Index, Length(Folder) + 1);
+    RegWriteExpandStringValue(HKCU, 'Environment', 'Path', Copy(Padded, 2, Length(Padded) - 2));
+  end;
+end;
+
+// The checkbox decides, so unticking it when updating takes the folder out again.
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    UpdatePath(WizardIsTaskSelected('addtopath'));
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    UpdatePath(False);
 end;
 
 procedure InitializeWizard();

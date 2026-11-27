@@ -18,6 +18,7 @@ pub enum Modal {
     Domain(DomainForm),
     Properties(PropertiesView),
     About(AboutView),
+    Update(super::updates::UpdateView),
 }
 
 /// Results of work started from a dialog.
@@ -374,14 +375,14 @@ fn name_problem(name: &str, taken: &HashSet<String>) -> Option<&'static str> {
 
 /// What the footer of a dialog asked for this frame.
 #[derive(Default)]
-struct Footer {
-    submit: bool,
-    secondary: bool,
-    cancel: bool,
+pub(super) struct Footer {
+    pub submit: bool,
+    pub secondary: bool,
+    pub cancel: bool,
 }
 
 /// Draws the common dialog chrome around `body`.
-fn dialog(
+pub(super) fn dialog(
     ctx: &egui::Context,
     title: &str,
     width: f32,
@@ -517,7 +518,7 @@ fn dialog(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ButtonKind {
+pub(super) enum ButtonKind {
     Primary,
     Danger,
     Cancel,
@@ -561,6 +562,29 @@ fn cell(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> egui::Response) {
     });
 }
 
+/// The app icon with a name and a line under it, at the top of dialogs about
+/// the app itself.
+pub(super) fn masthead(ui: &mut Ui, icon: Option<&egui::TextureHandle>, name: &str, line: &str) {
+    const ICON: f32 = 64.0;
+    let p = theme::palette(ui);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 14.0;
+        if let Some(icon) = icon {
+            ui.add(egui::Image::new(icon).fit_to_exact_size(vec2(ICON, ICON)));
+        }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let font = theme::strong(20.0);
+            let text = ui.fonts_mut(|f| f.row_height(&font))
+                + 2.0
+                + ui.text_style_height(&egui::TextStyle::Body);
+            ui.add_space(((ICON - text) / 2.0).max(0.0));
+            ui.label(RichText::new(name).font(font).color(p.text));
+            ui.label(RichText::new(line).color(p.muted));
+        });
+    });
+}
+
 fn text_input(ui: &mut Ui, value: &mut String, hint: &str, password: bool) -> egui::Response {
     ui.add(
         egui::TextEdit::singleline(value)
@@ -583,6 +607,7 @@ impl FathomApp {
             Modal::Domain(form) => self.domain_dialog(ctx, form),
             Modal::Properties(view) => self.properties_dialog(ctx, view),
             Modal::About(view) => self.about_dialog(ctx, view),
+            Modal::Update(view) => self.update_dialog(ctx, view),
         };
         // A dialog may have opened another one (for example remove -> add connection).
         if keep && self.modal.is_none() {
@@ -1187,22 +1212,26 @@ impl FathomApp {
         !(footer.cancel || footer.submit)
     }
 
+    /// The app icon, for dialogs about the app itself.
+    pub(super) fn app_icon(&self) -> Option<egui::TextureHandle> {
+        let icon = image::load_from_memory(include_bytes!("../../assets/icons/128x128@2x.png"));
+        icon.ok().map(|icon| {
+            let icon = icon.to_rgba8();
+            let size = [icon.width() as usize, icon.height() as usize];
+            let pixels = egui::ColorImage::from_rgba_unmultiplied(size, icon.as_raw());
+            self.ctx
+                .load_texture("app-icon", pixels, egui::TextureOptions::LINEAR)
+        })
+    }
+
     pub(super) fn show_about(&mut self) {
-        let icon = image::load_from_memory(include_bytes!("../../assets/icons/128x128@2x.png"))
-            .ok()
-            .map(|icon| {
-                let icon = icon.to_rgba8();
-                let size = [icon.width() as usize, icon.height() as usize];
-                let pixels = egui::ColorImage::from_rgba_unmultiplied(size, icon.as_raw());
-                self.ctx
-                    .load_texture("about-icon", pixels, egui::TextureOptions::LINEAR)
-            });
+        let icon = self.app_icon();
         self.modal = Some(Modal::About(AboutView { icon }));
     }
 
     fn about_dialog(&mut self, ctx: &egui::Context, view: &mut AboutView) -> bool {
         let p = theme::palette_of(ctx);
-        let mut rows = vec![("Version", env!("CARGO_PKG_VERSION").to_string())];
+        let mut rows = Vec::new();
         // Release builds run on GitHub Actions, which names the commit being built.
         if let Some(sha) = option_env!("GITHUB_SHA") {
             rows.push(("Commit", sha.chars().take(7).collect()));
@@ -1218,6 +1247,7 @@ impl FathomApp {
         ];
 
         let mut open = None;
+        let (mut check, mut update) = (false, false);
         let footer = dialog(
             ctx,
             "About Fathom",
@@ -1225,28 +1255,51 @@ impl FathomApp {
             false,
             &[("Close", ButtonKind::Primary)],
             |ui| {
-                const ICON: f32 = 64.0;
                 const LABEL: f32 = 96.0;
                 const GAP: f32 = 12.0;
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 14.0;
-                    if let Some(icon) = &view.icon {
-                        ui.add(egui::Image::new(icon).fit_to_exact_size(vec2(ICON, ICON)));
-                    }
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        let name = theme::strong(20.0);
-                        let text = ui.fonts_mut(|f| f.row_height(&name))
-                            + 2.0
-                            + ui.text_style_height(&egui::TextStyle::Body);
-                        ui.add_space(((ICON - text) / 2.0).max(0.0));
-                        ui.label(RichText::new("Fathom").font(name).color(p.text));
-                        ui.label(RichText::new("File manager for Cloudflare R2").color(p.muted));
-                    });
-                });
+                masthead(
+                    ui,
+                    view.icon.as_ref(),
+                    "Fathom",
+                    "File manager for Cloudflare R2",
+                );
                 ui.add_space(12.0);
                 ui.spacing_mut().item_spacing.y = ROW_GAP;
                 let value_width = ui.available_width() - LABEL - GAP;
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = GAP;
+                    cell(ui, LABEL, |ui| {
+                        ui.label(RichText::new("Version").color(p.muted))
+                    });
+                    cell(ui, value_width, |ui| {
+                        ui.horizontal_top(|ui| {
+                            // Only as tall as the text, like the other rows.
+                            ui.spacing_mut().interact_size.y = 0.0;
+                            ui.spacing_mut().item_spacing.x = 10.0;
+                            ui.add(egui::Label::new(crate::update::current()).selectable(true));
+                            let updates = &self.updates;
+                            let muted = |text: &str| RichText::new(text).color(p.muted);
+                            if let Some(notice) = &updates.available {
+                                update = ui.link(format!("Update to {}", notice.version)).clicked();
+                            } else if updates.checking {
+                                ui.label(muted("Checking for updates..."));
+                            } else {
+                                match &updates.asked {
+                                    Some(Ok(())) => {
+                                        ui.label(muted("Up to date"));
+                                    }
+                                    Some(Err(error)) => {
+                                        ui.label(muted("Couldn't check for updates"))
+                                            .on_hover_text(error);
+                                        check = ui.link("Try again").clicked();
+                                    }
+                                    None => check = ui.link("Check for updates").clicked(),
+                                }
+                            }
+                        })
+                        .response
+                    });
+                });
                 for (label, value) in &rows {
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = GAP;
@@ -1285,6 +1338,13 @@ impl FathomApp {
             if let Err(error) = crate::system::open(url) {
                 self.toast(error, ToastKind::Error);
             }
+        }
+        if check {
+            self.check_for_updates(true);
+        }
+        if update {
+            self.show_update();
+            return false;
         }
         !(footer.cancel || footer.submit)
     }

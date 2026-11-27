@@ -30,6 +30,9 @@ pub struct StoredObject {
     pub content_type: String,
 }
 
+/// A release's version, and its files by name.
+type Published = (String, Vec<(String, Vec<u8>)>);
+
 #[derive(Default)]
 struct State {
     /// bucket -> key -> object
@@ -40,6 +43,18 @@ struct State {
     custom_domains: HashMap<String, Vec<(String, bool)>>,
     /// bucket -> (r2.dev domain, public access on)
     managed_domains: HashMap<String, (String, bool)>,
+    /// Zone names in the account.
+    zones: Vec<String>,
+    /// (zone ID, request body) of every cache purge.
+    purges: Vec<(String, serde_json::Value)>,
+    /// Whether the token lacks the Cache Purge permission.
+    purge_denied: bool,
+    /// The latest release on GitHub.
+    release: Option<Published>,
+    /// Files whose download doesn't match their checksum.
+    corrupt: Vec<String>,
+    /// A pause between chunks of a download, to watch its progress.
+    trickle: Option<std::time::Duration>,
     /// `METHOD path?query` of every request served.
     log: Vec<String>,
 }
@@ -62,6 +77,8 @@ struct HttpResponse {
     status: u16,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    /// Sends the body slowly, pausing between chunks.
+    trickle: Option<std::time::Duration>,
 }
 
 impl HttpResponse {
@@ -70,6 +87,7 @@ impl HttpResponse {
             status,
             headers: Vec::new(),
             body: Vec::new(),
+            trickle: None,
         }
     }
 
@@ -172,7 +190,9 @@ impl MockS3 {
     }
 
     /// Attaches a custom domain to a bucket, as the Cloudflare API reports it.
+    /// The zone it belongs to is its last two labels.
     pub fn add_custom_domain(&self, bucket: &str, domain: &str, active: bool) {
+        self.add_zone(zone_name(domain));
         self.state
             .lock()
             .unwrap()
@@ -180,6 +200,50 @@ impl MockS3 {
             .entry(bucket.to_string())
             .or_default()
             .push((domain.to_string(), active));
+    }
+
+    /// Adds a zone to the account and returns its ID.
+    pub fn add_zone(&self, name: &str) -> String {
+        let mut state = self.state.lock().unwrap();
+        if !state.zones.iter().any(|z| z == name) {
+            state.zones.push(name.to_string());
+        }
+        zone_id(name)
+    }
+
+    /// The (zone ID, request body) of every cache purge so far.
+    pub fn purges(&self) -> Vec<(String, serde_json::Value)> {
+        self.state.lock().unwrap().purges.clone()
+    }
+
+    /// Makes purges fail the way they do for a token without the Cache Purge permission.
+    pub fn deny_purge(&self) {
+        self.state.lock().unwrap().purge_denied = true;
+    }
+
+    /// Publishes a release of Fathom on the stand-in for GitHub, with these
+    /// files and a SHA256SUMS.txt listing them.
+    pub fn publish(&self, version: &str, files: &[(&str, &[u8])]) {
+        let mut files: Vec<(String, Vec<u8>)> = files
+            .iter()
+            .map(|(name, data)| (name.to_string(), data.to_vec()))
+            .collect();
+        let sums: String = files
+            .iter()
+            .map(|(name, data)| format!("{}  {name}\n", sigv4::sha256_hex(data)))
+            .collect();
+        files.push(("SHA256SUMS.txt".into(), sums.into_bytes()));
+        self.state.lock().unwrap().release = Some((version.to_string(), files));
+    }
+
+    /// Makes a published file download as something other than its checksum says.
+    pub fn corrupt(&self, name: &str) {
+        self.state.lock().unwrap().corrupt.push(name.to_string());
+    }
+
+    /// Slows downloads down, pausing this long between 64 KB chunks.
+    pub fn trickle_downloads(&self, pause: std::time::Duration) {
+        self.state.lock().unwrap().trickle = Some(pause);
     }
 
     /// Sets a bucket's r2.dev address and whether public access is on there.
@@ -211,6 +275,10 @@ fn serve(stream: TcpStream, state: &Mutex<State>, host: &str, page_size: usize) 
         let is_head = request.method == "HEAD";
         let response = if request.raw_path.starts_with("/client/v4/") {
             handle_api(&request, state)
+        } else if request.raw_path.starts_with("/repos/")
+            || request.raw_path.starts_with("/downloads/")
+        {
+            handle_github(&request, state, host)
         } else {
             match check_signature(&request, host) {
                 Ok(()) => handle(&request, state, page_size),
@@ -238,8 +306,20 @@ fn serve(stream: TcpStream, state: &Mutex<State>, host: &str, page_size: usize) 
         if writer.write_all(head.as_bytes()).is_err() {
             return;
         }
-        if !is_head && writer.write_all(&response.body).is_err() {
-            return;
+        if !is_head {
+            let chunk = if response.trickle.is_some() {
+                64 * 1024
+            } else {
+                response.body.len().max(1)
+            };
+            for part in response.body.chunks(chunk) {
+                if writer.write_all(part).is_err() || writer.flush().is_err() {
+                    return;
+                }
+                if let Some(pause) = response.trickle {
+                    thread::sleep(pause);
+                }
+            }
         }
         let _ = writer.flush();
     }
@@ -301,8 +381,22 @@ fn query_pairs(raw_query: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The few Cloudflare API routes Fathom uses: verifying a token and reading a
-/// bucket's domains.
+/// `cdn.example.com` -> `example.com`
+fn zone_name(domain: &str) -> &str {
+    let mut dots = domain.rmatch_indices('.');
+    match (dots.next(), dots.next()) {
+        (Some(_), Some((index, _))) => &domain[index + 1..],
+        _ => domain,
+    }
+}
+
+/// A zone ID that looks like a real one: 32 hex digits.
+pub fn zone_id(name: &str) -> String {
+    sigv4::sha256_hex(name.as_bytes())[..32].to_string()
+}
+
+/// The few Cloudflare API routes Fathom uses: verifying a token, reading a
+/// bucket's domains, finding zones and purging their cache.
 fn handle_api(request: &HttpRequest, state: &Mutex<State>) -> HttpResponse {
     let mut state = state.lock().unwrap();
     state
@@ -345,10 +439,46 @@ fn handle_api(request: &HttpRequest, state: &Mutex<State>) -> HttpResponse {
                 .flatten()
                 .map(|(domain, active)| {
                     let status = if *active { "active" } else { "pending" };
-                    serde_json::json!({"domain": domain, "enabled": true, "status": {"ownership": status, "ssl": status}, "minTLS": "1.0"})
+                    let zone = zone_name(domain);
+                    serde_json::json!({"domain": domain, "enabled": true, "status": {"ownership": status, "ssl": status}, "minTLS": "1.0", "zoneId": zone_id(zone), "zoneName": zone})
                 })
                 .collect();
             success(serde_json::json!({"domains": domains}))
+        }
+        ["zones"] => {
+            let name = query_pairs(&request.raw_query)
+                .into_iter()
+                .find(|(key, _)| key == "name")
+                .map(|(_, value)| value)
+                .unwrap_or_default();
+            let zones: Vec<serde_json::Value> = state
+                .zones
+                .iter()
+                .filter(|zone| **zone == name)
+                .map(|zone| serde_json::json!({"id": zone_id(zone), "name": zone, "status": "active"}))
+                .collect();
+            success(serde_json::json!(zones))
+        }
+        ["zones", zone, "purge_cache"] if request.method == "POST" => {
+            if state.purge_denied {
+                return failure(403, 10000, "Authentication error");
+            }
+            if !state.zones.iter().any(|name| zone_id(name) == *zone) {
+                return failure(404, 7003, "Could not route to this zone");
+            }
+            let Ok(body) = serde_json::from_slice::<serde_json::Value>(&request.body) else {
+                return failure(400, 1012, "Request must contain one of \"purge_everything\", \"files\", \"tags\", \"hosts\" or \"prefixes\"");
+            };
+            let items = ["files", "prefixes"]
+                .iter()
+                .filter_map(|field| body.get(field)?.as_array())
+                .map(Vec::len)
+                .sum::<usize>();
+            if items == 0 || items > 100 {
+                return failure(400, 1015, "Purge requests take 1 to 100 items");
+            }
+            state.purges.push((zone.to_string(), body));
+            success(serde_json::json!({"id": zone}))
         }
         ["accounts", _, "r2", "buckets", bucket, "domains", "managed"] => {
             let (domain, enabled) = state
@@ -360,6 +490,55 @@ fn handle_api(request: &HttpRequest, state: &Mutex<State>) -> HttpResponse {
         }
         _ => failure(404, 7003, "No route for that URI"),
     }
+}
+
+/// The two GitHub routes updates use: the latest release, and its files.
+fn handle_github(request: &HttpRequest, state: &Mutex<State>, host: &str) -> HttpResponse {
+    let state = state.lock().unwrap();
+    let json = |status: u16, body: serde_json::Value| {
+        HttpResponse::new(status)
+            .header("content-type", "application/json")
+            .body(body.to_string().into_bytes())
+    };
+    let not_found = || json(404, serde_json::json!({"message": "Not Found"}));
+    let Some((version, files)) = &state.release else {
+        return not_found();
+    };
+    if request.raw_path == "/repos/dend/fathom/releases/latest" {
+        let assets: Vec<serde_json::Value> = files
+            .iter()
+            .map(|(name, data)| {
+                serde_json::json!({
+                    "name": name,
+                    "size": data.len(),
+                    "browser_download_url": format!("http://{host}/downloads/{name}"),
+                })
+            })
+            .collect();
+        return json(
+            200,
+            serde_json::json!({
+                "tag_name": version,
+                "html_url": format!("https://github.com/dend/fathom/releases/tag/{version}"),
+                "draft": false,
+                "prerelease": false,
+                "assets": assets,
+            }),
+        );
+    }
+    let name = request.raw_path.trim_start_matches("/downloads/");
+    let Some((_, data)) = files.iter().find(|(file, _)| file == name) else {
+        return not_found();
+    };
+    let mut data = data.clone();
+    if state.corrupt.iter().any(|file| file == name) {
+        data.reverse();
+    }
+    let mut response = HttpResponse::new(200)
+        .header("content-type", "application/octet-stream")
+        .body(data);
+    response.trickle = state.trickle;
+    response
 }
 
 /// Accepts requests signed with the fixed test keys, or with the keys Cloudflare

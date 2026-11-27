@@ -1,5 +1,5 @@
 //! The Cloudflare API, for what the S3 API can't do: turning an API token into
-//! S3 keys, and finding the public domain of a bucket.
+//! S3 keys, finding the public domain of a bucket, and purging it from the cache.
 
 use std::time::Duration;
 
@@ -8,7 +8,10 @@ use serde::Deserialize;
 
 use crate::sigv4;
 
-const API: &str = "https://api.cloudflare.com/client/v4";
+pub const API: &str = "https://api.cloudflare.com/client/v4";
+/// URLs or prefixes per purge request. Every plan allows at least this many.
+pub const PURGE_BATCH: usize = 100;
+const ATTEMPTS: u32 = 4;
 
 pub struct Api {
     agent: ureq::Agent,
@@ -55,6 +58,8 @@ struct CustomDomain {
     enabled: bool,
     #[serde(default)]
     status: DomainStatus,
+    #[serde(default, rename = "zoneId")]
+    zone_id: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -63,6 +68,19 @@ struct DomainStatus {
     ownership: String,
     #[serde(default)]
     ssl: String,
+}
+
+#[derive(Deserialize)]
+struct Zone {
+    id: String,
+}
+
+/// Why a request failed, and how long to wait before trying again, when
+/// trying again may help.
+struct Failure {
+    message: String,
+    status: u16,
+    retry_after: Option<Duration>,
 }
 
 #[derive(Deserialize, Default)]
@@ -128,43 +146,177 @@ impl Api {
         bucket: &str,
         jurisdiction: &str,
     ) -> Result<Option<String>, String> {
-        let path = format!(
-            "/accounts/{}/r2/buckets/{}/domains",
-            self.account_id,
-            sigv4::uri_encode(bucket, true)
-        );
-        let custom: CustomDomains = self.get(&format!("{path}/custom"), jurisdiction)?;
+        let custom: CustomDomains = self.get(&self.domains_path(bucket, "custom"), jurisdiction)?;
         if let Some(domain) = pick_custom(&custom) {
             return Ok(Some(domain));
         }
-        let managed: ManagedDomain = self.get(&format!("{path}/managed"), jurisdiction)?;
+        let managed: ManagedDomain =
+            self.get(&self.domains_path(bucket, "managed"), jurisdiction)?;
         Ok(pick_managed(&managed))
     }
 
-    fn get<T: DeserializeOwned>(&self, path: &str, jurisdiction: &str) -> Result<T, String> {
-        let mut request = self
-            .agent
-            .get(format!("{}{path}", self.base))
-            .header("authorization", format!("Bearer {}", self.token));
-        if !jurisdiction.is_empty() {
-            request = request.header("cf-r2-jurisdiction", jurisdiction);
+    /// Every custom domain that serves a bucket, as a base URL such as
+    /// `https://cdn.example.com`, with the ID of its zone when Cloudflare says.
+    pub fn custom_domains(
+        &self,
+        bucket: &str,
+        jurisdiction: &str,
+    ) -> Result<Vec<(String, String)>, String> {
+        let custom: CustomDomains = self.get(&self.domains_path(bucket, "custom"), jurisdiction)?;
+        Ok(custom
+            .domains
+            .into_iter()
+            .filter(serving)
+            .map(|d| (format!("https://{}", d.domain), d.zone_id))
+            .collect())
+    }
+
+    fn domains_path(&self, bucket: &str, kind: &str) -> String {
+        format!(
+            "/accounts/{}/r2/buckets/{}/domains/{kind}",
+            self.account_id,
+            sigv4::uri_encode(bucket, true)
+        )
+    }
+
+    /// The ID of the zone that serves `host`, needed to purge its cache: the
+    /// longest part of the hostname that is a zone in the account.
+    pub fn zone_of(&self, host: &str) -> Result<String, String> {
+        let labels: Vec<&str> = host.split('.').collect();
+        for start in 0..labels.len().saturating_sub(1) {
+            let name = labels[start..].join(".");
+            let path = format!("/zones?name={}", sigv4::uri_encode(&name, true));
+            let zones: Vec<Zone> = self.get(&path, "").map_err(|e| {
+                format!(
+                    "Could not find the Cloudflare zone of {host}: {e}. Attach {host} to the \
+                     bucket as a custom domain, or give the API token the Zone > Zone > Read \
+                     permission."
+                )
+            })?;
+            if let Some(zone) = zones.into_iter().next() {
+                return Ok(zone.id);
+            }
         }
-        let mut response = request.call().map_err(|e| self.redact(&e.to_string()))?;
+        Err(format!(
+            "{host} isn't in a zone of this Cloudflare account, so its cache can't be purged."
+        ))
+    }
+
+    /// Removes URLs such as `https://cdn.example.com/a.png` and prefixes such
+    /// as `cdn.example.com/photos/` from the cache of a zone. `progress` gets
+    /// how many of them are done.
+    pub fn purge(
+        &self,
+        zone_id: &str,
+        files: &[String],
+        prefixes: &[String],
+        progress: &dyn Fn(usize),
+    ) -> Result<(), String> {
+        let path = format!("/zones/{}/purge_cache", sigv4::uri_encode(zone_id, true));
+        let mut done = 0;
+        for (field, items) in [("files", files), ("prefixes", prefixes)] {
+            for batch in items.chunks(PURGE_BATCH) {
+                let body = serde_json::json!({ field: batch });
+                self.request::<serde_json::Value>(&path, "", Some(&body))
+                    .map_err(|failure| match failure.status {
+                        401 | 403 => format!(
+                            "{}. Purging needs an API token with the Zone > Cache Purge \
+                             permission.",
+                            failure.message
+                        ),
+                        _ => failure.message,
+                    })?;
+                done += batch.len();
+                progress(done);
+            }
+        }
+        Ok(())
+    }
+
+    fn get<T: DeserializeOwned>(&self, path: &str, jurisdiction: &str) -> Result<T, String> {
+        self.request(path, jurisdiction, None)
+            .map_err(|failure| failure.message)
+    }
+
+    /// Sends a GET, or a POST when there is a body, trying again while
+    /// Cloudflare is rate limiting or briefly unavailable.
+    fn request<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        jurisdiction: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, Failure> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match self.send(path, jurisdiction, body) {
+                Err(Failure {
+                    retry_after: Some(wait),
+                    ..
+                }) if attempt < ATTEMPTS => std::thread::sleep(wait),
+                other => return other,
+            }
+        }
+    }
+
+    fn send<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        jurisdiction: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, Failure> {
+        let url = format!("{}{path}", self.base);
+        let authorization = format!("Bearer {}", self.token);
+        let result = match body {
+            Some(body) => self
+                .agent
+                .post(&url)
+                .header("authorization", &authorization)
+                .header("content-type", "application/json")
+                .send(body.to_string()),
+            None => {
+                let mut request = self.agent.get(&url).header("authorization", &authorization);
+                if !jurisdiction.is_empty() {
+                    request = request.header("cf-r2-jurisdiction", jurisdiction);
+                }
+                request.call()
+            }
+        };
+        let fail = |message: String, status: u16, retry_after: Option<Duration>| Failure {
+            message,
+            status,
+            retry_after,
+        };
+        let mut response = result.map_err(|e| fail(self.redact(&e.to_string()), 0, None))?;
         let status = response.status().as_u16();
+        let retry_after = (status == 429 || status >= 500).then(|| {
+            let seconds: u64 = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(2);
+            Duration::from_secs(seconds.clamp(1, 30))
+        });
         let body = response
             .body_mut()
             .with_config()
             .limit(1024 * 1024)
             .read_to_string()
-            .map_err(|e| self.redact(&e.to_string()))?;
-        let envelope: Envelope<T> = serde_json::from_str(&body)
-            .map_err(|_| format!("Unexpected response from Cloudflare (HTTP {status})"))?;
+            .map_err(|e| fail(self.redact(&e.to_string()), status, retry_after))?;
+        let envelope: Envelope<T> = serde_json::from_str(&body).map_err(|_| {
+            let message = format!("Unexpected response from Cloudflare (HTTP {status})");
+            fail(message, status, retry_after)
+        })?;
         match envelope.result {
             Some(result) if envelope.success && status < 300 => Ok(result),
-            _ => Err(match envelope.errors.first() {
-                Some(error) => self.redact(&format!("{} (code {})", error.message, error.code)),
-                None => format!("Cloudflare returned HTTP {status}"),
-            }),
+            _ => {
+                let message = match envelope.errors.first() {
+                    Some(error) => self.redact(&format!("{} (code {})", error.message, error.code)),
+                    None => format!("Cloudflare returned HTTP {status}"),
+                };
+                Err(fail(message, status, retry_after))
+            }
         }
     }
 
@@ -180,15 +332,18 @@ impl Api {
     }
 }
 
+/// Whether a custom domain is set up and answering requests.
+fn serving(domain: &CustomDomain) -> bool {
+    domain.enabled
+        && domain.status.ownership == "active"
+        && matches!(domain.status.ssl.as_str(), "active" | "")
+}
+
 fn pick_custom(custom: &CustomDomains) -> Option<String> {
     custom
         .domains
         .iter()
-        .find(|d| {
-            d.enabled
-                && d.status.ownership == "active"
-                && matches!(d.status.ssl.as_str(), "active" | "")
-        })
+        .find(|d| serving(d))
         .map(|d| format!("https://{}", d.domain))
 }
 
@@ -218,6 +373,18 @@ mod tests {
             Some("https://cdn.example.com")
         );
         assert_eq!(pick_custom(&custom(r#"{"domains": []}"#)), None);
+    }
+
+    #[test]
+    fn reads_the_zone_of_a_custom_domain_when_given() {
+        let domains = custom(
+            r#"{"domains": [
+                {"domain": "cdn.example.com", "enabled": true, "status": {"ownership": "active", "ssl": "active"}, "zoneId": "023e105f4ecef8ad9ca31a8372d0c353", "zoneName": "example.com"},
+                {"domain": "old.example.com", "enabled": true, "status": {"ownership": "active", "ssl": "active"}}
+            ]}"#,
+        );
+        let zones: Vec<&str> = domains.domains.iter().map(|d| d.zone_id.as_str()).collect();
+        assert_eq!(zones, ["023e105f4ecef8ad9ca31a8372d0c353", ""]);
     }
 
     #[test]

@@ -81,7 +81,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist, portable | Out-Null
-          Copy-Item target/release/fathom.exe portable/
+          Copy-Item target/release/fathom.exe, target/release/fth.exe portable/
           Copy-Item LICENSE portable/LICENSE.txt
           Compress-Archive -Path portable/* -DestinationPath "dist/fathom-$env:VERSION-windows-x64-portable.zip"
 
@@ -101,7 +101,7 @@ jobs:
       - name: Build the installer
         shell: pwsh
         run: |
-          & "$env:RUNNER_TEMP\inno\ISCC.exe" /Q "/DAppVersion=$env:VERSION" "/DSourceExe=$PWD\target\release\fathom.exe" "/O$PWD\dist" installer\fathom.iss
+          & "$env:RUNNER_TEMP\inno\ISCC.exe" /Q "/DAppVersion=$env:VERSION" "/DSourceExe=$PWD\target\release\fathom.exe" "/DSourceCliExe=$PWD\target\release\fth.exe" "/O$PWD\dist" installer\fathom.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-ChildItem dist
 

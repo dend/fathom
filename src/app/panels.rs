@@ -334,6 +334,7 @@ impl FathomApp {
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 self.transfers_button(ui);
+                self.update_item(ui);
             });
         });
     }

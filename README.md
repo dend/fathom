@@ -30,12 +30,26 @@
 
 1. Download the installer for your platform from the [latest release](https://github.com/dend/fathom/releases/latest).
 2. Run it. On macOS, then run `xattr -dr com.apple.quarantine /Applications/Fathom.app`.
-3. To update later, run the newer installer.
+3. Fathom checks for new versions once a day and updates itself. `FATHOM_NO_UPDATE_CHECK=1` turns the check off.
 
 ## Connect to R2
 
 1. Create an API token in the [Cloudflare dashboard](https://dash.cloudflare.com/?to=/:account/r2/api-tokens), under **R2 > Manage API tokens**.
 2. In Fathom, choose **Add connection...** and paste your **Account ID** and the token's **Token value**.
+
+## Command line
+
+`fth` comes with Fathom and uses its connections. The Windows installer puts it on the PATH; on macOS it's in `Fathom.app/Contents/MacOS`.
+
+```sh
+fth ls media 'photos/**/*.png'            # what a pattern matches
+fth upload website 'dist/**' --purge      # upload, then purge the cache
+fth download media photos/2024/ --to backup
+fth delete logs 'app/2023-**' --dry-run
+fth update
+```
+
+Patterns are paths, globs or, with `--regex`, regular expressions. Purging needs a token with the **Cache Purge** permission. In CI, set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`. `fth help` has the rest.
 
 ## Build
 

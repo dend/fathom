@@ -1,4 +1,5 @@
-// Windows resources for fathom.exe. build.rs fills in the @...@ placeholders.
+// Windows resources for fathom.exe and fth.exe. build.rs fills in the
+// @...@ placeholders for each.
 
 1 ICON "@ICON@"
 
@@ -11,11 +12,11 @@ BEGIN
     BLOCK "040904B0"
     BEGIN
       VALUE "CompanyName", "Den Delimarsky"
-      VALUE "FileDescription", "Fathom"
+      VALUE "FileDescription", "@DESCRIPTION@"
       VALUE "FileVersion", "@VERSION@"
-      VALUE "InternalName", "fathom"
+      VALUE "InternalName", "@NAME@"
       VALUE "LegalCopyright", "Copyright (c) Den Delimarsky"
-      VALUE "OriginalFilename", "fathom.exe"
+      VALUE "OriginalFilename", "@NAME@.exe"
       VALUE "ProductName", "Fathom"
       VALUE "ProductVersion", "@VERSION@"
     END

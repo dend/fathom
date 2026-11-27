@@ -11,6 +11,7 @@ mod panels;
 mod preview;
 mod theme;
 mod tree;
+mod updates;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
@@ -175,6 +176,7 @@ pub enum Event {
         count: usize,
         verb: &'static str,
     },
+    Update(updates::Reply),
 }
 
 pub struct FathomApp {
@@ -227,6 +229,7 @@ pub struct FathomApp {
     modal: Option<dialogs::Modal>,
     /// The graphics API and adapter, for the About dialog.
     graphics: String,
+    updates: updates::Updates,
 
     refresh_at: Option<Instant>,
     tree_refresh_at: Option<(Instant, HashSet<String>)>,
@@ -277,8 +280,10 @@ impl FathomApp {
         let proxy =
             Arc::new(PreviewServer::start().expect("could not start the local preview server"));
 
+        let settings = system::config_dir();
         let mut app = Self {
-            store: Arc::new(Store::load(system::config_dir())),
+            updates: updates::Updates::new(&settings),
+            store: Arc::new(Store::load(settings)),
             transfers,
             proxy,
             tx,
@@ -1071,6 +1076,7 @@ impl FathomApp {
                     self.show_transfers = true;
                 }
             }
+            Event::Update(reply) => self.update_reply(reply),
         }
     }
 
@@ -1117,6 +1123,7 @@ impl FathomApp {
     }
 
     fn run_timers(&mut self, ctx: &egui::Context) {
+        self.check_for_updates_when_due(ctx);
         let now = Instant::now();
         if let Some(at) = self.refresh_at {
             if now >= at {

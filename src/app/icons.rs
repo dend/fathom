@@ -53,6 +53,7 @@ pub enum Icon {
     Retry,
     Cloud,
     Play,
+    Update,
 }
 
 struct Pen<'a> {
@@ -386,6 +387,11 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
             pen.arc(17.5, 13.75, 4.25, 4.25, 280.0, 450.0);
         }
         Icon::Play => pen.filled(&[(8.0, 5.0), (19.0, 12.0), (8.0, 19.0)], color),
+        Icon::Update => {
+            pen.circle(12.0, 12.0, 9.0);
+            pen.line(12.0, 16.5, 12.0, 7.5);
+            pen.poly(&[(8.5, 11.0), (12.0, 7.5), (15.5, 11.0)]);
+        }
     }
 }
 

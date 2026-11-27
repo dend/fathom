@@ -17,14 +17,19 @@ fn main() {
             .display()
             .to_string()
             .replace('\\', "/");
-        let resource = template
-            .replace("@ICON@", &icon)
-            .replace("@VERSION@", &version)
-            .replace("@VERSION_NUMBERS@", &format!("{},0", numbers.join(",")));
-        let generated = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("fathom.rc");
-        std::fs::write(&generated, resource).unwrap();
-        embed_resource::compile(&generated, embed_resource::NONE)
-            .manifest_optional()
-            .unwrap();
+        for (name, description) in [("fathom", "Fathom"), ("fth", "Fathom command line tool")] {
+            let resource = template
+                .replace("@ICON@", &icon)
+                .replace("@NAME@", name)
+                .replace("@DESCRIPTION@", description)
+                .replace("@VERSION@", &version)
+                .replace("@VERSION_NUMBERS@", &format!("{},0", numbers.join(",")));
+            let generated =
+                PathBuf::from(std::env::var("OUT_DIR").unwrap()).join(format!("{name}.rc"));
+            std::fs::write(&generated, resource).unwrap();
+            embed_resource::compile_for(&generated, [name], embed_resource::NONE)
+                .manifest_optional()
+                .unwrap();
+        }
     }
 }

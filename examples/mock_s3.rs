@@ -13,6 +13,15 @@
 //! Without `--register`, add a connection in Fathom with any account ID, the API
 //! token `test-api-token` and the custom endpoint `http://127.0.0.1:9321` (under
 //! Advanced). Set `FATHOM_CONFIG_DIR` to keep this away from your real settings.
+//!
+//! The command line tool can use it without a saved connection:
+//!
+//! ```sh
+//! export CLOUDFLARE_ACCOUNT_ID=mock CLOUDFLARE_API_TOKEN=test-api-token
+//! export FATHOM_ENDPOINT=http://127.0.0.1:9321
+//! export FATHOM_CLOUDFLARE_API=http://127.0.0.1:9321/client/v4
+//! cargo run --bin fth -- purge media 'photos/**/*.png' --dry-run
+//! ```
 
 #[path = "../tests/common/mod.rs"]
 mod common;

@@ -15,6 +15,7 @@ fn main() -> eframe::Result {
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }
+    fathom::update::tidy();
     let config_dir = fathom::system::config_dir();
     if let Some(old) = fathom::system::old_config_dir() {
         fathom::system::move_old_settings(&old, &config_dir);

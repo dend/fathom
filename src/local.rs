@@ -24,6 +24,39 @@ pub fn collect_uploads(paths: &[PathBuf], prefix: &str) -> Vec<UploadSource> {
     found
 }
 
+/// Finds what below `base` matches, judging each file and folder by its path
+/// relative to `base` with `/` between folders. A matching folder brings
+/// everything in it. Keys are those relative paths.
+pub fn collect_matching(base: &Path, matches: &dyn Fn(&str) -> bool) -> Vec<UploadSource> {
+    let mut found = Vec::new();
+    search(base, "", matches, &mut found);
+    found
+}
+
+fn search(
+    dir: &Path,
+    relative: &str,
+    matches: &dyn Fn(&str) -> bool,
+    found: &mut Vec<UploadSource>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut children: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    children.sort();
+    for child in children {
+        let Some(name) = child.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let key = format!("{relative}{name}");
+        if matches(&key) {
+            walk(&child, key, found);
+        } else if child.is_dir() && !fs::symlink_metadata(&child).is_ok_and(|m| m.is_symlink()) {
+            search(&child, &format!("{key}/"), matches, found);
+        }
+    }
+}
+
 fn walk(path: &Path, key: String, found: &mut Vec<UploadSource>) {
     let Ok(metadata) = fs::metadata(path) else {
         return;
@@ -169,6 +202,33 @@ mod tests {
                 ("dest/single.bin", 0)
             ]
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn collects_what_matches_a_pattern() {
+        let dir = temp_dir("matching");
+        fs::create_dir_all(dir.join("dist/css")).unwrap();
+        fs::write(dir.join("dist/index.html"), b"<p>").unwrap();
+        fs::write(dir.join("dist/css/site.css"), b"a{}").unwrap();
+        fs::write(dir.join("dist/css/print.css"), b"b{}").unwrap();
+
+        let keys = |matches: &dyn Fn(&str) -> bool| -> Vec<String> {
+            collect_matching(&dir.join("dist"), matches)
+                .into_iter()
+                .map(|f| f.key)
+                .collect()
+        };
+        assert_eq!(
+            keys(&|k| k.ends_with(".css")),
+            ["css/print.css", "css/site.css"]
+        );
+        // A matching folder brings everything in it, as a shell glob would.
+        assert_eq!(
+            keys(&|k| !k.contains('/')),
+            ["css/print.css", "css/site.css", "index.html"]
+        );
+        assert!(keys(&|_| false).is_empty());
         let _ = fs::remove_dir_all(dir);
     }
 
