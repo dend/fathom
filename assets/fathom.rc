@@ -11,11 +11,11 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "CompanyName", "Den Delimarsky"
+      VALUE "CompanyName", "Den"
       VALUE "FileDescription", "@DESCRIPTION@"
       VALUE "FileVersion", "@VERSION@"
       VALUE "InternalName", "@NAME@"
-      VALUE "LegalCopyright", "Copyright (c) Den Delimarsky"
+      VALUE "LegalCopyright", "Copyright (c) Den"
       VALUE "OriginalFilename", "@NAME@.exe"
       VALUE "ProductName", "Fathom"
       VALUE "ProductVersion", "@VERSION@"

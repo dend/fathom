@@ -2,7 +2,7 @@
 name = "fathom"
 version = "0.0.1"
 description = "High performance Cloudflare R2 storage manager"
-authors = ["Den Delimarsky"]
+authors = ["Den"]
 license = "MIT"
 repository = "https://github.com/dend/fathom"
 edition = "2021"
@@ -83,8 +83,8 @@ strip = true
 [package.metadata.packager]
 product-name = "Fathom"
 identifier = "dev.den.fathom"
-publisher = "Den Delimarsky"
-copyright = "Copyright (c) Den Delimarsky"
+publisher = "Den"
+copyright = "Copyright (c) Den"
 category = "Utility"
 description = "A file explorer for Cloudflare R2."
 long-description = "Browse buckets, upload and download in bulk, preview files and copy public URLs."
