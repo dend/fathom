@@ -447,8 +447,8 @@ impl FathomApp {
                     Stroke::new(1.0, p.border_strong),
                     StrokeKind::Inside,
                 );
-                let copy = Rect::from_min_size(
-                    pos2(rect.right() - 24.0, rect.top() + 3.0),
+                let copy = Rect::from_center_size(
+                    pos2(rect.right() - 13.0, rect.center().y),
                     vec2(20.0, 20.0),
                 );
                 let text = Rect::from_min_max(
@@ -463,7 +463,7 @@ impl FathomApp {
                     p.muted,
                 );
                 let mut copy_ui = ui.new_child(egui::UiBuilder::new().max_rect(copy));
-                if icons::button(&mut copy_ui, Icon::Copy, "Copy public URL", true).clicked() {
+                if icons::inline_button(&mut copy_ui, Icon::Copy, "Copy public URL").clicked() {
                     ui.ctx().copy_text(url);
                     self.toast("Public URL copied", ToastKind::Success);
                 }

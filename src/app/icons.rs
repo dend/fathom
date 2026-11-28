@@ -397,9 +397,24 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
 
 /// Square, borderless toolbar button with an icon.
 pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str, enabled: bool) -> Response {
-    let size = egui::vec2(26.0, 26.0);
+    sized_button(ui, icon, tooltip, enabled, 26.0, 16.0)
+}
+
+/// Smaller [`button`], to sit inside a 26px box.
+pub fn inline_button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
+    sized_button(ui, icon, tooltip, true, 20.0, 14.0)
+}
+
+fn sized_button(
+    ui: &mut Ui,
+    icon: Icon,
+    tooltip: &str,
+    enabled: bool,
+    size: f32,
+    icon_size: f32,
+) -> Response {
     let (rect, response) = ui.allocate_exact_size(
-        size,
+        egui::vec2(size, size),
         if enabled {
             Sense::click()
         } else {
@@ -419,7 +434,7 @@ pub fn button(ui: &mut Ui, icon: Icon, tooltip: &str, enabled: bool) -> Response
     };
     paint(
         ui.painter(),
-        Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
+        Rect::from_center_size(rect.center(), egui::vec2(icon_size, icon_size)),
         icon,
         color,
     );
